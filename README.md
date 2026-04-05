@@ -150,6 +150,93 @@ curl http://127.0.0.1:8080/v1/messages ...
 
 This keeps your OAuth token on your local machine — the remote server never sees it.
 
+## ⚠️ Claude Code 2.x Update (2026-04)
+
+**Starting from Claude Code 2.x, `~/.claude/oauthToken` no longer exists.**
+
+Claude Code 2.x changed its authentication mechanism:
+- ❌ **Old (1.x)**: Token stored at `~/.claude/oauthToken` (plaintext file)
+- ✅ **New (2.x)**: OAuth session stored internally, no accessible token file
+
+### Getting a Long-Lived Token (Claude Code 2.x)
+
+Use the `setup-token` command to generate a 1-year OAuth token:
+
+```bash
+# May require proxy in some regions
+HTTPS_PROXY=http://127.0.0.1:7891 claude setup-token
+```
+
+This creates a token like:
+```
+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
+```
+
+**Save this token** and use it with the proxy:
+
+1. **Option A**: Put it in a file
+   ```bash
+   echo "sk-ant-oat01-YOUR-TOKEN-HERE" > ~/.claude/oauthToken
+   python3 proxy.py  # Will read from default location
+   ```
+
+2. **Option B**: Use environment variable
+   ```bash
+   export ANTHROPIC_OAUTH_TOKEN="sk-ant-oat01-YOUR-TOKEN-HERE"
+   python3 proxy.py --token-file /dev/stdin <<< "$ANTHROPIC_OAUTH_TOKEN"
+   ```
+
+### Regional Restrictions & Proxy Setup
+
+Some regions require a proxy to authenticate with Claude:
+
+**Example: VPS in Hong Kong accessing Claude via Singapore proxy**
+
+1. **Setup mihomo (Clash Meta) with Singapore node**
+   ```bash
+   # Install mihomo
+   curl -L https://github.com/MetaCubeX/mihomo/releases/download/v1.18.0/mihomo-linux-amd64 -o /usr/local/bin/mihomo
+   chmod +x /usr/local/bin/mihomo
+
+   # Start with your subscription config
+   mihomo -d /path/to/config
+   ```
+
+2. **Switch to Singapore node via API**
+   ```bash
+   # Get current proxies
+   curl http://127.0.0.1:9090/proxies
+
+   # Switch to Singapore
+   curl -X PUT http://127.0.0.1:9090/proxies/%E2%99%BB%EF%B8%8F%20%E6%89%8B%E5%8A%A8%E9%80%89%E6%8B%A9%E8%8A%82%E7%82%B9 \
+     -H 'Content-Type: application/json' \
+     -d '{"name":"pro-新加坡01"}'
+
+   # Verify (should show "country": "SG")
+   curl -x http://127.0.0.1:7891 https://ipinfo.io/json
+   ```
+
+3. **Persist proxy for Claude CLI**
+   ```bash
+   echo 'export HTTPS_PROXY=http://127.0.0.1:7891' >> ~/.bashrc
+   echo 'export HTTP_PROXY=http://127.0.0.1:7891' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+
+4. **Login and get token**
+   ```bash
+   # OAuth login (one-time)
+   claude login
+
+   # Generate long-lived token
+   claude setup-token
+   ```
+
+**Common Issues:**
+- ❌ **403 Forbidden** → Wrong region, use proxy
+- ❌ **OAuth error** → Code expired (60s limit), retry immediately
+- ❌ **Invalid API key** → Long-lived token is NOT a standard API key, use with this proxy
+
 ## FAQ
 
 **Q: Is this against Anthropic's terms of service?**
