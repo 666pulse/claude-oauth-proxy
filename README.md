@@ -1,3 +1,7 @@
+# 中文
+
+[中文介绍](readmd_zh.md)
+
 # claude-oauth-proxy
 
 Use your Claude Max/Pro subscription's OAuth token to call the Anthropic Messages API directly.
