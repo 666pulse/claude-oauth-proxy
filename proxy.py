@@ -41,6 +41,7 @@ DEFAULT_PORT = 8080
 
 _log_file = None
 
+
 def log(msg):
     ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:12]
     line = f"[{ts}] {msg}"
@@ -49,7 +50,9 @@ def log(msg):
         with open(_log_file, "a") as f:
             f.write(line + "\n")
 
+
 # ── Token loading ──────────────────────────────────────────────────────────────
+
 
 def load_token(token_file):
     """Load OAuth token from file.
@@ -90,7 +93,9 @@ def load_token(token_file):
         log(f"Error reading token: {e}")
         return ""
 
+
 # ── Request patching ───────────────────────────────────────────────────────────
+
 
 def patch_body(body):
     """Inject Claude Code identity system prompt into the request body.
@@ -121,6 +126,7 @@ def patch_body(body):
     except (json.JSONDecodeError, Exception):
         return body
 
+
 def build_forwarded_headers(token, body_length):
     """Build the complete set of headers for the forwarded request.
 
@@ -134,8 +140,8 @@ def build_forwarded_headers(token, body_length):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
         "anthropic-version": "2023-06-01",
-        "anthropic-beta": OAUTH_BETAS,                           # Requirement 1
-        "anthropic-dangerous-direct-browser-access": "true",     # Requirement 3
+        "anthropic-beta": OAUTH_BETAS,  # Requirement 1
+        "anthropic-dangerous-direct-browser-access": "true",  # Requirement 3
         "accept": "application/json",
         "user-agent": "claude-cli/1.0.0",
         "x-app": "cli",
@@ -143,7 +149,9 @@ def build_forwarded_headers(token, body_length):
         "Connection": "close",
     }
 
+
 # ── Connection handler ─────────────────────────────────────────────────────────
+
 
 def handle_client(client_sock, addr, token_file):
     try:
@@ -174,7 +182,7 @@ def handle_client(client_sock, addr, token_file):
         # Parse HTTP request
         header_end = data.index(b"\r\n\r\n")
         header_section = data[:header_end].decode("utf-8", "replace")
-        body = data[header_end + 4:]
+        body = data[header_end + 4 :]
 
         lines = header_section.split("\r\n")
         request_line = lines[0]
@@ -185,9 +193,9 @@ def handle_client(client_sock, addr, token_file):
         # Health check endpoint
         if method == "GET":
             resp = (
-                b'HTTP/1.1 200 OK\r\n'
-                b'Content-Type: application/json\r\n'
-                b'Connection: close\r\n\r\n'
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Connection: close\r\n\r\n"
                 b'{"status":"ok","service":"claude-oauth-proxy"}'
             )
             client_sock.sendall(resp)
@@ -198,9 +206,9 @@ def handle_client(client_sock, addr, token_file):
         token = load_token(token_file)
         if not token:
             resp = (
-                b'HTTP/1.1 500 Internal Server Error\r\n'
-                b'Content-Type: application/json\r\n'
-                b'Connection: close\r\n\r\n'
+                b"HTTP/1.1 500 Internal Server Error\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Connection: close\r\n\r\n"
                 b'{"error":"No OAuth token found. Check your --token-file path."}'
             )
             client_sock.sendall(resp)
@@ -211,6 +219,29 @@ def handle_client(client_sock, addr, token_file):
         patched_body = patch_body(body) if b"/messages" in path.encode() else body
 
         log(f"POST {path} body={len(patched_body)}b")
+        try:
+            body_json = json.loads(patched_body)
+            model = body_json.get("model", "?")
+            stream = body_json.get("stream", False)
+            messages = body_json.get("messages", [])
+            log(f"  model={model} stream={stream} messages={len(messages)}")
+            # Log each message's content
+            for i, msg in enumerate(messages):
+                role = msg.get("role", "?")
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    text = " ".join(
+                        b.get("text", "")
+                        for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                else:
+                    text = str(content)
+                log(f"  [{i}] {role}: {text[:200]}")
+        except Exception:
+            log(f"  body(raw): {patched_body[:200]}")
 
         # Build raw HTTPS request to Anthropic
         # (Raw TCP is used instead of urllib/requests to avoid buffering issues with SSE streaming)
@@ -219,17 +250,55 @@ def handle_client(client_sock, addr, token_file):
         header_lines = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
         raw_request = (req_line + header_lines + "\r\n").encode() + patched_body
 
-        # Connect to Anthropic via TLS
+        # Connect to Anthropic via TLS (with optional HTTPS proxy support)
         ctx = ssl.create_default_context()
+        proxy_url = (
+            os.environ.get("HTTPS_PROXY")
+            or os.environ.get("https_proxy")
+            or os.environ.get("ALL_PROXY")
+            or os.environ.get("all_proxy")
+        )
+
         raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         raw_sock.settimeout(600)
+
+        if proxy_url:
+            # Parse proxy URL: http://host:port or socks5://host:port etc.
+            from urllib.parse import urlparse
+
+            parsed = urlparse(proxy_url)
+            proxy_host = parsed.hostname
+            proxy_port = parsed.port or 1080
+            raw_sock.connect((proxy_host, proxy_port))
+            # Send HTTP CONNECT to establish tunnel
+            connect_req = (
+                f"CONNECT {ANTHROPIC_HOST}:{ANTHROPIC_PORT} HTTP/1.1\r\n"
+                f"Host: {ANTHROPIC_HOST}:{ANTHROPIC_PORT}\r\n"
+                f"\r\n"
+            ).encode()
+            raw_sock.sendall(connect_req)
+            # Read CONNECT response
+            connect_resp = b""
+            while b"\r\n\r\n" not in connect_resp:
+                connect_resp += raw_sock.recv(4096)
+            status_line = connect_resp.split(b"\r\n")[0].decode()
+            if "200" not in status_line:
+                log(f"  proxy CONNECT failed: {status_line}")
+                client_sock.close()
+                raw_sock.close()
+                return
+            log(f"  proxy tunnel established via {proxy_host}:{proxy_port}")
+
+        if not proxy_url:
+            raw_sock.connect((ANTHROPIC_HOST, ANTHROPIC_PORT))
         tls_sock = ctx.wrap_socket(raw_sock, server_hostname=ANTHROPIC_HOST)
-        tls_sock.connect((ANTHROPIC_HOST, ANTHROPIC_PORT))
         tls_sock.sendall(raw_request)
 
         # Stream response back to client
         total_bytes = 0
         status_logged = False
+        resp_status = ""
+        resp_data = b""
         while True:
             try:
                 chunk = tls_sock.recv(8192)
@@ -238,15 +307,40 @@ def handle_client(client_sock, addr, token_file):
                 if not status_logged:
                     try:
                         first_line = chunk.split(b"\r\n")[0].decode()
-                        status = first_line.split(" ")[1]
-                        log(f"  -> {status}")
+                        resp_status = first_line.split(" ")[1]
+                        log(f"  -> {resp_status}")
                     except Exception:
                         pass
                     status_logged = True
                 total_bytes += len(chunk)
+                resp_data += chunk
                 client_sock.sendall(chunk)
             except (socket.timeout, ConnectionError, ssl.SSLError):
                 break
+
+        # Log response body
+        try:
+            body_start = resp_data.find(b"\r\n\r\n")
+            if body_start != -1:
+                resp_body_raw = resp_data[body_start + 4 :]
+                if resp_status and resp_status.startswith("2"):
+                    # For successful responses, extract and log the text content
+                    try:
+                        resp_json = json.loads(resp_body_raw)
+                        # Log usage info
+                        usage = resp_json.get("usage", {})
+                        if usage:
+                            log(
+                                f"  usage: in={usage.get('input_tokens', 0)} out={usage.get('output_tokens', 0)}"
+                            )
+                    except (json.JSONDecodeError, Exception):
+                        pass
+                else:
+                    # For error responses, log raw body
+                    resp_body = resp_body_raw.decode("utf-8", "replace")
+                    log(f"  response body: {resp_body[:1000]}")
+        except Exception:
+            pass
 
         log(f"  done: {total_bytes}b")
         tls_sock.close()
@@ -258,7 +352,9 @@ def handle_client(client_sock, addr, token_file):
         except Exception:
             pass
 
+
 # ── Main ───────────────────────────────────────────────────────────────────────
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -281,18 +377,21 @@ Environment variables:
 """,
     )
     parser.add_argument(
-        "--port", "-p",
+        "--port",
+        "-p",
         type=int,
         default=int(os.environ.get("ANTHROPIC_PROXY_PORT", DEFAULT_PORT)),
         help=f"Port to listen on (default: {DEFAULT_PORT})",
     )
     parser.add_argument(
-        "--token-file", "-t",
+        "--token-file",
+        "-t",
         default=os.environ.get("ANTHROPIC_OAUTH_TOKEN_FILE", DEFAULT_TOKEN_FILE),
         help=f"Path to OAuth token file (default: {DEFAULT_TOKEN_FILE})",
     )
     parser.add_argument(
-        "--log-file", "-l",
+        "--log-file",
+        "-l",
         default=None,
         help="Optional log file path (logs always go to stdout)",
     )
@@ -315,7 +414,9 @@ Environment variables:
     if token:
         log(f"Token loaded: {token[:20]}...{token[-4:]}")
     else:
-        log("WARNING: No token found! Requests will fail until a valid token is available.")
+        log(
+            "WARNING: No token found! Requests will fail until a valid token is available."
+        )
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -336,6 +437,7 @@ Environment variables:
     except KeyboardInterrupt:
         log("Shutting down")
         srv.close()
+
 
 if __name__ == "__main__":
     main()

@@ -75,6 +75,17 @@ curl -X POST http://127.0.0.1:8080/v1/messages \
   }'
 ```
 
+```bash
+curl -X POST http://127.0.0.1:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-opus-4-6",
+    "max_tokens": 256,
+    "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+    "messages": [{"role": "user", "content": "今天有ai相关的重要新闻么"}]
+  }'
+```
+
 With the OpenAI-compatible SDKs:
 
 ```python
@@ -210,7 +221,7 @@ Some regions require a proxy to authenticate with Claude:
    # Switch to Singapore
    curl -X PUT http://127.0.0.1:9090/proxies/%E2%99%BB%EF%B8%8F%20%E6%89%8B%E5%8A%A8%E9%80%89%E6%8B%A9%E8%8A%82%E7%82%B9 \
      -H 'Content-Type: application/json' \
-     -d '{"name":"pro-新加坡01"}'
+     -d '{"name":"pro-新加坡 01"}'
 
    # Verify (should show "country": "SG")
    curl -x http://127.0.0.1:7891 https://ipinfo.io/json
