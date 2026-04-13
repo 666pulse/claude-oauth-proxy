@@ -1,6 +1,8 @@
 # Claude OAuth Proxy 使用指南
 
-使用 Claude Max/Pro 订阅的 OAuth Token 调用 Anthropic Messages API。纯 Python 标准库，零依赖。
+https://mp.weixin.qq.com/s/9DtgaQiFzC8NIKgegDW9SQ
+
+将 Claude 的会员账号变成了 API 使用，纯 Python 标准库，零依赖。
 
 ## 前提条件
 
